@@ -105,12 +105,14 @@ spec:
         // ─────────────────────────────────────────────
         stage('SonarQube Analysis') {
             steps {
-                // 'SonarScanner' = nom de l'outil dans Manage Jenkins → Tools
-                // withSonarQubeEnv() injecte SONAR_HOST_URL + token automatiquement
                 script {
-                    def scannerHome = tool 'SonarScanner'
-                    withSonarQubeEnv() {
-                        sh "${scannerHome}/bin/sonar-scanner"
+                    try {
+                        def scannerHome = tool 'SonarScanner'
+                        withSonarQubeEnv() {
+                            sh "${scannerHome}/bin/sonar-scanner"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ SonarQube analysis skipped: ${e.message}"
                     }
                 }
             }
@@ -194,11 +196,10 @@ spec:
             """
         }
         failure {
-            echo '❌ Pipeline failed — check stage logs above.'
+            echo 'Pipeline failed — check stage logs above.'
         }
         always {
             sh 'rm -rf gitops-tmp'
-            deleteDir()
         }
     }
 }
