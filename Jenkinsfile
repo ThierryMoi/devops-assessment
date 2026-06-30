@@ -119,7 +119,7 @@ spec:
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
                                     -Dsonar.host.url=\${SONAR_HOST_URL} \
-                                    -Dsonar.token=\${SONAR_AUTH_TOKEN}
+                                    -Dsonar.token=\${SONAR_TOKEN}
                             """
                         }
                     } catch (Exception e) {
