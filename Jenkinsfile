@@ -25,8 +25,8 @@ spec:
           mountPath: /kaniko/.docker
 
     # ── Trivy scanner ──
-    # FIX: ajout du secret Harbor pour permettre le pull de l'image privée
-    # en mode "remote" (Trivy lit automatiquement $DOCKER_CONFIG/config.json)
+    # FIX: ajout du secret Harbor pour permettre le pull de l'image privee
+    # en mode remote, via le fichier config.json du registre
     - name: trivy
       image: aquasec/trivy:latest
       command: ['sleep']
