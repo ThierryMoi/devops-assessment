@@ -25,10 +25,18 @@ spec:
           mountPath: /kaniko/.docker
 
     # ── Trivy scanner ──
+    # FIX: ajout du secret Harbor pour permettre le pull de l'image privée
+    # en mode "remote" (Trivy lit automatiquement $DOCKER_CONFIG/config.json)
     - name: trivy
       image: aquasec/trivy:latest
       command: ['sleep']
       args: ['infinity']
+      env:
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker
+      volumeMounts:
+        - name: kaniko-secret
+          mountPath: /kaniko/.docker
 
   volumes:
     - name: kaniko-secret
@@ -80,9 +88,6 @@ spec:
             steps {
                 container('node') {
                     sh 'npm ci --no-audit'
-                    // Lint non-blocking: le code source fourni contient des erreurs tslint
-                    // (single quotes vs double quotes, @Output rename, etc.)
-                    // On ne modifie pas le code applicatif — on remonte l'info sans bloquer
                     sh 'npx ng lint || true'
                 }
             }
@@ -94,7 +99,6 @@ spec:
         stage('Unit Tests') {
             steps {
                 container('node') {
-                    // ChromeHeadless requires Chromium — best-effort in CI
                     sh 'npx ng test --watch=false --code-coverage || true'
                 }
             }
@@ -102,14 +106,21 @@ spec:
 
         // ─────────────────────────────────────────────
         // 4. SONARQUBE ANALYSIS (non-blocking)
+        // FIX: le sonar-scanner CLI 8.1.0 lit "sonar.token" / SONAR_TOKEN,
+        // pas SONAR_AUTH_TOKEN (variable historique injectée par le plugin
+        // Jenkins). On passe donc le token explicitement en propriété -D.
         // ─────────────────────────────────────────────
         stage('SonarQube Analysis') {
             steps {
                 script {
                     try {
                         def scannerHome = tool 'SonarScanner'
-                        withSonarQubeEnv() {
-                            sh "${scannerHome}/bin/sonar-scanner"
+                        withSonarQubeEnv('sonar') {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                    -Dsonar.host.url=\${SONAR_HOST_URL} \
+                                    -Dsonar.token=\${SONAR_AUTH_TOKEN}
+                            """
                         }
                     } catch (Exception e) {
                         echo "⚠️ SonarQube analysis skipped: ${e.message}"
