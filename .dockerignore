@@ -1,10 +1,61 @@
+# ── Version control & CI/CD ──────────────────────────────────
 .git
-.firebase
-.editorconfig
-/node_modules
-/e2e
-/docs
 .gitignore
-*.zip
-*.md
+.github
+Jenkinsfile
+sonar-project.properties
 
+# ── Documentation ────────────────────────────────────────────
+*.md
+docs
+
+# ── Dependencies (reinstalled via npm ci) ────────────────────
+node_modules
+
+# ── Build artifacts ────────────────────────────────────────────
+dist
+coverage
+tmp
+out-tsc
+*.tsbuildinfo
+
+# ── Tests & e2e (not needed for ng build --prod) ───────────────
+e2e
+**/*.spec.ts
+src/test.ts
+src/karma.conf.js
+src/tsconfig.spec.json
+
+# ── IDE & editor ───────────────────────────────────────────────
+.editorconfig
+.angulardoc.json
+.idea
+.vscode
+.history
+*.sublime-workspace
+*.sublime-project
+
+# ── Firebase & local tooling ───────────────────────────────────
+.firebase
+
+# ── Secrets & env (never bake into image) ──────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs & OS junk ─────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# ── Archives ───────────────────────────────────────────────────
+*.zip
+*.tar
+*.tar.gz
+
+# ── Docker meta (not needed inside COPY . .) ───────────────────
+Dockerfile
+.dockerignore
+docker-compose*.yml
