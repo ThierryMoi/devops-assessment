@@ -110,25 +110,28 @@ spec:
         // pas SONAR_AUTH_TOKEN (variable historique injectée par le plugin
         // Jenkins). On passe donc le token explicitement en propriété -D.
         // ─────────────────────────────────────────────
-        stage('SonarQube Analysis') {
+        stage('SonarQube Analysis - DEBUG') {
             steps {
                 script {
                     try {
                         def scannerHome = tool 'SonarScanner'
                         withSonarQubeEnv('sonar') {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                    -Dsonar.host.url=\${SONAR_HOST_URL} \
-                                    -Dsonar.token=\${SONAR_TOKEN}
-                            """
+                            sh '''
+                                echo "=== Variables SONAR_* injectees par Jenkins ==="
+                                printenv | grep -i SONAR | sed -E 's/=(.{0,4}).*/=\\1***MASKED***/'
+                                echo "=== Fin liste ==="
+                                echo ""
+                                echo "SONAR_HOST_URL brut: ${SONAR_HOST_URL}"
+                                echo "SONAR_AUTH_TOKEN est vide ? : $([ -z "${SONAR_AUTH_TOKEN}" ] && echo OUI-VIDE || echo NON-rempli)"
+                                echo "Longueur SONAR_AUTH_TOKEN: ${#SONAR_AUTH_TOKEN}"
+                            '''
                         }
                     } catch (Exception e) {
-                        echo "⚠️ SonarQube analysis skipped: ${e.message}"
+                        echo "Debug stage failed: ${e.message}"
                     }
                 }
             }
         }
-
         // ─────────────────────────────────────────────
         // 5. BUILD & PUSH (Kaniko — no Docker daemon needed)
         // ─────────────────────────────────────────────
