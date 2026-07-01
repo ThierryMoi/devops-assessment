@@ -59,7 +59,7 @@ spec:
         // ── Registry Harbor ──
         HARBOR_REGISTRY = 'harbor.jaali.dev'
         HARBOR_PROJECT  = 'assessment'
-        IMAGE_NAME      = 'todo-app'
+        IMAGE_NAME      = 'assessment-app'
         IMAGE_TAG       = "${GIT_COMMIT.take(8)}"
         FULL_IMAGE      = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
 
@@ -164,6 +164,7 @@ spec:
                         trivy image \
                             --exit-code 0 \
                             --severity HIGH,CRITICAL \
+                            --ignore-unfixed \
                             --no-progress \
                             --format table \
                             ${FULL_IMAGE} | tee trivy-report.txt

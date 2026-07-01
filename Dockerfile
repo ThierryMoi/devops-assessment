@@ -4,6 +4,8 @@
 # ============================================================
 FROM node:10-alpine AS builder
 
+RUN apk update && apk upgrade --no-cache
+
 WORKDIR /app
 
 # Dependencies first — leverage Docker layer caching
