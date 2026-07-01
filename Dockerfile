@@ -21,28 +21,23 @@ RUN npx ng build --prod
 # ============================================================
 FROM nginx:1.27-alpine
 
-# FIX: apk upgrade doit etre ici (stage final), pas dans le
-# stage builder — Trivy et Harbor ne voient que cette image,
-# le stage builder est jete apres le COPY --from=builder
 RUN apk update && apk upgrade --no-cache
 
-# Custom nginx config for SPA routing
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Non-root nginx: writable pid, logs, cache and temp paths
+RUN mkdir -p /tmp/nginx /tmp/client_body /tmp/proxy /tmp/fastcgi /tmp/uwsgi /tmp/scgi \
+    && chown -R nginx:nginx /tmp /var/cache/nginx /var/log/nginx
 
-# Copy built static files
+COPY nginx-main.conf /etc/nginx/nginx.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist/ /usr/share/nginx/html
 
-# Non-root nginx: pid + temp dirs must be writable by UID 101
-RUN chown -R nginx:nginx /usr/share/nginx/html \
-    && chown -R nginx:nginx /var/cache/nginx \
-    && chown -R nginx:nginx /var/log/nginx \
-    && mkdir -p /tmp/nginx /tmp/client_body /tmp/proxy /tmp/fastcgi /tmp/uwsgi /tmp/scgi \
-    && chown -R nginx:nginx /tmp \
-    && sed -i 's|pid /run/nginx.pid;|pid /tmp/nginx/nginx.pid;|' /etc/nginx/nginx.conf
+RUN chown -R nginx:nginx /usr/share/nginx/html /etc/nginx/conf.d/default.conf
 
 USER nginx
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-    CMD wget -qO- http://localhost:8080/ || exit 1
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
