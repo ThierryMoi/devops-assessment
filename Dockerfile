@@ -32,12 +32,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built static files
 COPY --from=builder /app/dist/ /usr/share/nginx/html
 
-# Run as non-root for security
+# Non-root nginx: pid + temp dirs must be writable by UID 101
 RUN chown -R nginx:nginx /usr/share/nginx/html \
     && chown -R nginx:nginx /var/cache/nginx \
     && chown -R nginx:nginx /var/log/nginx \
-    && touch /var/run/nginx.pid \
-    && chown nginx:nginx /var/run/nginx.pid
+    && mkdir -p /tmp/nginx /tmp/client_body /tmp/proxy /tmp/fastcgi /tmp/uwsgi /tmp/scgi \
+    && chown -R nginx:nginx /tmp \
+    && sed -i 's|pid /run/nginx.pid;|pid /tmp/nginx/nginx.pid;|' /etc/nginx/nginx.conf
 
 USER nginx
 
