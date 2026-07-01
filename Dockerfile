@@ -4,8 +4,6 @@
 # ============================================================
 FROM node:10-alpine AS builder
 
-RUN apk update && apk upgrade --no-cache
-
 WORKDIR /app
 
 # Dependencies first — leverage Docker layer caching
@@ -22,6 +20,11 @@ RUN npx ng build --prod
 # Final image: ~25MB vs ~400MB+ with node
 # ============================================================
 FROM nginx:1.27-alpine
+
+# FIX: apk upgrade doit etre ici (stage final), pas dans le
+# stage builder — Trivy et Harbor ne voient que cette image,
+# le stage builder est jete apres le COPY --from=builder
+RUN apk update && apk upgrade --no-cache
 
 # Custom nginx config for SPA routing
 COPY nginx.conf /etc/nginx/conf.d/default.conf
