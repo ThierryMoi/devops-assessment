@@ -58,7 +58,7 @@ spec:
         FULL_IMAGE      = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
 
         // ── GitOps repo (CD via ArgoCD) ──
-        GITOPS_REPO   = 'github.com/ThierryMoi/todo-app-gitops.git'
+        GITOPS_REPO   = 'github.com/ThierryMoi/devops-assessment-gitops.git'
         GITOPS_BRANCH = 'main'
     }
 
