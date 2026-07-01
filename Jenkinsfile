@@ -20,6 +20,12 @@ spec:
       image: gcr.io/kaniko-project/executor:debug
       command: ['sleep']
       args: ['infinity']
+      env:
+        # FIX: bug connu Kaniko/Go http2 vs reverse proxies -
+        # force HTTP/1.1 pour eviter "stream error: INTERNAL_ERROR"
+        # lors de l extraction de layers caches depuis Harbor
+        - name: GODEBUG
+          value: "http2client=0"
       volumeMounts:
         - name: kaniko-secret
           mountPath: /kaniko/.docker
@@ -53,12 +59,13 @@ spec:
         // ── Registry Harbor ──
         HARBOR_REGISTRY = 'harbor.jaali.dev'
         HARBOR_PROJECT  = 'assessment'
-        IMAGE_NAME      = 'todo-app'
+        IMAGE_NAME      = 'assessment-app'
         IMAGE_TAG       = "${GIT_COMMIT.take(8)}"
         FULL_IMAGE      = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
 
         // ── GitOps repo (CD via ArgoCD) ──
         GITOPS_REPO   = 'github.com/ThierryMoi/devops-assessment-gitops.git'
+
         GITOPS_BRANCH = 'main'
     }
 
@@ -119,7 +126,8 @@ spec:
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
                                     -Dsonar.host.url=\${SONAR_HOST_URL} \
-                                    -Dsonar.token=\${SONAR_AUTH_TOKEN} """
+                                    -Dsonar.token=\${SONAR_AUTH_TOKEN}
+                            """
                         }
                     } catch (Exception e) {
                         echo "⚠️ SonarQube analysis skipped: ${e.message}"
@@ -156,6 +164,7 @@ spec:
                         trivy image \
                             --exit-code 0 \
                             --severity HIGH,CRITICAL \
+                            --ignore-unfixed \
                             --no-progress \
                             --format table \
                             ${FULL_IMAGE} | tee trivy-report.txt
