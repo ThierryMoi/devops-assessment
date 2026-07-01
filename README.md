@@ -1,45 +1,38 @@
 # Assessment App — DevOps Assessment
 
+Angular 7 todo application with a full CI/CD pipeline: Jenkins (CI) → Harbor → GitOps → ArgoCD (CD) on the [JaaLi platform](https://github.com/ThierryMoi/jaali-ai-platform).
+
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         CI (Jenkins)                                │
+│                    CI — Jenkins (namespace ci-cd)                    │
 │                                                                     │
-│  Checkout → Lint → Tests → SonarQube → Docker Build → Trivy → Push │
-│                                                          │          │
-│                                                    Harbor Registry  │
+│  Checkout → Lint → Tests → SonarQube → Build → Trivy → Push Harbor │
 └──────────────────────────────────────────────────────────┬──────────┘
                                                            │
-                                              git push (prod-<sha> tag)
+                                    prod-<commit-sha> tag  │
+                                                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              GitOps — devops-assessment-gitops (GitHub)              │
+│                                                                     │
+│  overlays/prod/          gateway/              chart/               │
+│  ├── namespace           └── ReferenceGrant    └── Helm (optional)  │
+│  ├── deployment                                                     │
+│  ├── service                                                        │
+│  └── HTTPRoute                                                      │
+└──────────────────────────────────────────────────────────┬──────────┘
+                                                           │
+                                                  ArgoCD auto-sync
                                                            │
                                                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      GitOps Repo (CD)                               │
+│                   Kubernetes — JaaLi production cluster                │
 │                                                                     │
-│  base/           overlays/prod/         chart/                      │
-│  ├── deployment  └── kustomization      ├── Chart.yaml              │
-│  ├── service                            ├── values.yaml           │
-│  └── httproute                          └── templates/              │
-└──────────────────────────────────────────────────────────┬──────────┘
-                                                           │
-                                                    ArgoCD auto-sync
-                                                           │
-                                                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                   Kubernetes Cluster (Production)                    │
-│                                                                     │
-│  ┌─ Gateway (Envoy) ─ TLS (cert-manager/Let's Encrypt) ┐           │
-│  │                                                      │           │
-│  │  HTTPRoute: assessment.jaali.dev                     │           │
-│  │       │                                              │           │
-│  │       ▼                                              │           │
-│  │  Service (ClusterIP:80)                              │           │
-│  │       │                                              │           │
-│  │       ├── Pod (nginx:8080) ── replica 1              │           │
-│  │       ├── Pod (nginx:8080) ── replica 2              │           │
-│  │       └── Pod (nginx:8080) ── replica 3              │           │
-│  └──────────────────────────────────────────────────────┘           │
+│  envoy-gateway-system          assessment-app-prod                  │
+│  ┌─ jaali-gateway ─────┐      ┌─ HTTPRoute: assessment.jaali.dev   │
+│  │  (TLS / cert-manager)│────▶│  Service → Deployment (3 pods)    │
+│  └──────────────────────┘      └───────────────────────────────────┘
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,92 +40,71 @@
 
 ### 1. Containerization
 
-**Multi-stage Docker build** using `node:10-alpine` (Angular 7.2 requires Node 10) for the build stage and `nginx:1.27-alpine` for serving. This approach reduces the final image from ~400MB to ~25MB by excluding node_modules, TypeScript source, and build tooling.
+**Multi-stage Docker build** using `node:10-alpine` (Angular 7.2 requires Node 10) for the build stage and `nginx:1.27-alpine` for serving (~25 MB final image vs ~400 MB with Node).
 
-The container runs as `nginx` user (non-root, UID 101) for security. A custom `nginx.conf` handles SPA routing (`try_files`), gzip compression, cache headers for hashed assets, and a `/healthz` endpoint for Kubernetes probes.
+The container runs as `nginx` user (non-root, UID 101). A custom `nginx.conf` handles SPA routing, gzip, cache headers, and `/healthz` probes. The pid file and temp directories are under `/tmp/` to avoid permission errors in non-root mode.
 
-### 2. CI/CD Architecture — Separation of Concerns
+### 2. CI/CD — Separation of Concerns
 
-The pipeline follows a **strict CI/CD separation**:
+| Layer | Tool | Responsibility |
+|-------|------|----------------|
+| CI | Jenkins | Build, test, scan, push image |
+| Registry | Harbor (`harbor.jaali.dev/assessment`) | Store immutable images |
+| CD | ArgoCD (`ci-cd` namespace) | Deploy from Git, drift detection, rollback |
+| GitOps | `devops-assessment-gitops` | Desired state (Kustomize + ReferenceGrant) |
 
-- **CI (Jenkins)**: build, test, scan, push — no cluster access needed
-- **CD (ArgoCD)**: deployment, sync, rollback — pull-based GitOps
-
-This is more secure than a monolithic pipeline where Jenkins runs `kubectl apply`, because:
-- Jenkins never holds a kubeconfig or cluster credentials
-- The only bridge between CI and CD is a `git push` to the GitOps repo
-- ArgoCD pulls the desired state; no inbound network access to the cluster required
-- Drift detection and self-healing are handled natively by ArgoCD
+Jenkins never holds cluster credentials. The only bridge between CI and CD is a `git push` to the GitOps repo.
 
 ### 3. CI Pipeline Stages (Jenkins)
 
 | Stage | Purpose | Blocking? |
 |-------|---------|-----------|
 | Checkout | Clone source | Yes |
-| Install & Lint | `npm ci` + `ng lint` (tslint) | Yes |
+| Install & Lint | `npm ci` + `ng lint` | Yes |
 | Unit Tests | `ng test --watch=false` | No (best-effort) |
-| SonarQube | Static analysis + quality gate | No (informational) |
-| Docker Build | Multi-stage build | Yes |
+| SonarQube | Static analysis | No (informational) |
+| Build & Push | Kaniko multi-stage build | Yes |
 | Trivy Scan | Container vulnerability scan | No (report archived) |
-| Push to Harbor | Push image tagged `prod-<commit-sha>` | Yes |
-| Update GitOps | Update prod image tag in GitOps repo | Yes |
+| Update GitOps | Bump `prod-<sha>` tag in GitOps repo | Yes |
 
-**Non-blocking scans rationale**: During initial integration, blocking on SonarQube quality gates or Trivy findings would stall delivery. Scans run and report results; the team reviews and progressively hardens thresholds. In a mature pipeline, both would become blocking (`abortPipeline: true`, `--exit-code 1`).
+**Image tagging**: `prod-<8-char-commit-sha>` — never `latest` or `stable`.
 
-**Image tagging**: Images are tagged `prod-<8-char-commit-sha>` — never `latest` or `stable`. This ensures traceability, reproducibility, and safe rollbacks.
+**Jenkins environment variables**:
+
+| Variable | Value |
+|----------|-------|
+| `HARBOR_REGISTRY` | `harbor.jaali.dev` |
+| `HARBOR_PROJECT` | `assessment` |
+| `IMAGE_NAME` | `assessment-app` |
+| `IMAGE_TAG` | `prod-${GIT_COMMIT.take(8)}` |
+| `GITOPS_REPO` | `github.com/ThierryMoi/devops-assessment-gitops.git` |
 
 ### 4. Kubernetes Deployment
 
-**Gateway API (HTTPRoute)** instead of Ingress because:
-- Gateway API is the official successor to Ingress (GA since Kubernetes 1.26)
-- It provides a cleaner separation between infrastructure (Gateway, managed by platform team) and application routing (HTTPRoute, managed by app team)
-- Compatible with Envoy Gateway deployed on the cluster
+**Gateway API (HTTPRoute)** attached to `jaali-gateway` in `envoy-gateway-system` — not Ingress. A **ReferenceGrant** authorizes the cross-namespace route (managed in the GitOps `gateway/` path).
 
-**TLS** is automated via cert-manager with Let's Encrypt ClusterIssuer, attached to the Gateway.
+**Production settings** (via Kustomize overlay):
 
-**Deployment strategy**: `RollingUpdate` with `maxUnavailable: 0` ensures zero-downtime deployments. Combined with readiness probes, new pods must be healthy before old ones are terminated.
+| Setting | Value |
+|---------|-------|
+| Namespace | `assessment-app-prod` |
+| Replicas | 3 |
+| Hostname | `assessment.jaali.dev` |
+| Rolling update | `maxUnavailable: 0` |
+| Probes | `/healthz` on port 8080 |
 
-**Security hardening**:
-- `runAsNonRoot: true` — pod-level enforcement
-- `allowPrivilegeEscalation: false`
-- `capabilities.drop: ["ALL"]`
-- `automountServiceAccountToken: false` — the app doesn't need K8s API access
+**Security**: non-root pod, dropped capabilities, no service account token, read-only root filesystem disabled (nginx needs write to `/tmp`).
 
 ### 5. Helm Chart
 
-The Helm chart in the GitOps repo (`chart/`) parameterizes deployment values:
+An optional Helm chart lives in the GitOps repo (`chart/` v0.2.0). ArgoCD uses Kustomize; Helm is available for manual installs or Harbor OCI packaging.
 
-| Parameter | Purpose |
-|-----------|---------|
-| `image.repository` / `image.tag` | Registry and version (`prod-<sha>`) |
-| `replicaCount` | Scale (3 in production) |
-| `resources.requests/limits` | Right-sizing |
-| `gateway.hostname` | DNS (`assessment.jaali.dev`) |
+### 6. Trade-offs
 
-**Why Helm is useful here**:
-- **Release management**: `helm history`, `helm rollback` for auditable deployments
-- **Packaging**: chart can be pushed to Harbor as an OCI artifact for versioned distribution
-- **Ecosystem**: well-understood by teams, integrates natively with ArgoCD
-
-### 6. Trade-offs and Assumptions
-
-- **Angular 7.2 is EOL**: in production, the first priority would be upgrading the framework. Node 10 is also EOL. The Dockerfile pins these versions to make the existing code work.
-- **Single production cluster**: no separate dev environment — Jenkins deploys directly to prod via GitOps after each successful build on `main`.
-- **Jenkins not deployed in-scope**: the Jenkinsfile is ready to execute on any Jenkins instance with Kubernetes agent, SonarQube Scanner, and Harbor credentials.
-- **Tests may not run in CI**: Angular 7 tests require Chrome/Chromium. The test stage is best-effort (`|| true`) to avoid blocking on environment issues.
-
-### 7. Production Improvements
-
-If this were a real production deployment, I would add:
-
-- **Horizontal Pod Autoscaler (HPA)** based on CPU/request metrics
-- **PodDisruptionBudget** to guarantee availability during node maintenance
-- **NetworkPolicies** to restrict pod-to-pod communication
-- **Prometheus ServiceMonitor** on nginx for request metrics + Grafana dashboard
-- **Image signing** with Cosign for supply chain security
-- **SBOM generation** alongside Trivy scans
-- **Rate limiting and WAF rules** at the Gateway level
-- **Progressive delivery** with Argo Rollouts (canary/blue-green)
+- **Angular 7 / Node 10 are EOL** — pinned for compatibility with the original assessment codebase.
+- **Single production cluster** — no dev environment; Jenkins deploys directly to prod.
+- **Private GitOps repo** — requires a GitHub PAT registered in ArgoCD.
+- **Tests best-effort in CI** — Angular 7 tests need Chromium; stage is non-blocking.
 
 ---
 
@@ -143,38 +115,61 @@ If this were a real production deployment, I would add:
 ```bash
 docker build -t assessment-app:local .
 docker run -p 8080:8080 assessment-app:local
-# Open http://localhost:8080
+# → http://localhost:8080
 ```
 
 ### Deploy to Kubernetes
 
 ```bash
-# Prerequisites: ArgoCD deployed, cert-manager configured
+export KUBECONFIG=/path/to/jaali-platform/kubeconfig/jaali.yaml
+
+# Prerequisites: ArgoCD, jaali-gateway, Harbor, GitHub repo registered in ArgoCD
 kubectl apply -f ../devops-assessment-gitops/argocd/application-prod.yaml
-# ArgoCD syncs automatically from the GitOps repo
+
+# Verify
+kubectl get application assessment-app-prod -n ci-cd
+kubectl get pods -n assessment-app-prod
 ```
 
 ### Trigger CI
 
-Push to `main` branch — Jenkins picks up the Jenkinsfile and runs the pipeline.
+Push to the Jenkins-tracked branch (`feature/devops-setup` or `main` after merge) — Jenkins runs the pipeline and updates the GitOps repo.
 
 ---
 
 ## Repository Structure
 
 ```
-devops-assessment/           ← this repo (fork of akieni-tech/devops-assessment)
-├── src/                     ← Angular 7 source (unchanged)
-├── Dockerfile               ← Multi-stage build (Node 10 → Nginx)
-├── Jenkinsfile              ← CI pipeline (8 stages)
-├── nginx.conf               ← SPA routing + security headers
-├── sonar-project.properties ← SonarQube configuration
-├── .dockerignore            ← Excludes from Docker context
-└── README.md                ← This file
+devops-assessment/              ← this repo (CI)
+├── src/                        ← Angular 7 source
+├── Dockerfile                  ← Multi-stage build (Node 10 → Nginx non-root)
+├── Jenkinsfile                 ← CI pipeline (8 stages)
+├── nginx.conf                  ← SPA routing + /healthz + security headers
+├── sonar-project.properties
+├── .dockerignore
+└── README.md
 
-devops-assessment-gitops/    ← separate repo
-├── base/                    ← Base K8s manifests (Kustomize)
-├── overlays/prod/           ← Prod overrides (3 replicas, prod-<sha> tag)
-├── argocd/                  ← ArgoCD Application CR
-└── chart/                   ← Helm chart
+devops-assessment-gitops/       ← separate repo (CD)
+├── base/                       ← Kustomize base manifests
+├── overlays/prod/              ← Prod: namespace, 3 replicas, prod-<sha>
+├── gateway/                    ← ReferenceGrant → jaali-gateway
+├── argocd/                     ← ArgoCD Application (multi-source)
+└── chart/                      ← Helm chart (optional)
 ```
+
+## Related Repositories
+
+| Repo | Role |
+|------|------|
+| [devops-assessment-gitops](https://github.com/ThierryMoi/devops-assessment-gitops) | Kubernetes manifests + ArgoCD Application |
+| [jaali-ai-platform](https://github.com/ThierryMoi/jaali-ai-platform) | Cluster platform (Gateway, ArgoCD, Jenkins, Harbor, DNS) |
+
+## Production Improvements
+
+- Horizontal Pod Autoscaler (HPA)
+- PodDisruptionBudget
+- NetworkPolicies
+- Prometheus ServiceMonitor + Grafana dashboard
+- Image signing (Cosign) + SBOM
+- Rate limiting / WAF at Gateway level
+- Progressive delivery (Argo Rollouts)
