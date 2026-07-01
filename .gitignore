@@ -29,6 +29,9 @@ speed-measure-plugin.json
 !.vscode/extensions.json
 .history/*
 
+# Cursor
+.cursor/
+
 # misc
 /.sass-cache
 /connect.lock
@@ -42,3 +45,13 @@ testem.log
 # System Files
 .DS_Store
 Thumbs.db
+
+# Secrets & env
+.env
+.env.*
+!.env.example
+
+# CI / DevOps artifacts
+gitops-tmp/
+trivy-report.txt
+*.tgz

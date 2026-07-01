@@ -60,7 +60,7 @@ spec:
         HARBOR_REGISTRY = 'harbor.jaali.dev'
         HARBOR_PROJECT  = 'assessment'
         IMAGE_NAME      = 'assessment-app'
-        IMAGE_TAG       = "${GIT_COMMIT.take(8)}"
+        IMAGE_TAG       = "prod-${GIT_COMMIT.take(8)}"
         FULL_IMAGE      = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
 
         // ── GitOps repo (CD via ArgoCD) ──
@@ -192,13 +192,13 @@ spec:
                         git clone --depth 1 --branch ${GITOPS_BRANCH} \
                             https://\${GH_TOKEN}@${GITOPS_REPO} gitops-tmp
 
-                        cd gitops-tmp/overlays/dev
+                        cd gitops-tmp/overlays/prod
                         sed -i 's|newTag:.*|newTag: "${IMAGE_TAG}"|' kustomization.yaml
 
                         git config user.email "jenkins@jaali.dev"
                         git config user.name "Jenkins CI"
                         git add .
-                        git diff --cached --quiet || git commit -m "ci: deploy todo-app ${IMAGE_TAG}"
+                        git diff --cached --quiet || git commit -m "ci: deploy assessment-app ${IMAGE_TAG} to prod"
                         git push origin ${GITOPS_BRANCH}
                     """
                 }

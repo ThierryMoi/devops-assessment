@@ -1,4 +1,4 @@
-# Todo App — DevOps Assessment
+# Assessment App — DevOps Assessment
 
 ## Architecture Overview
 
@@ -11,33 +11,34 @@
 │                                                    Harbor Registry  │
 └──────────────────────────────────────────────────────────┬──────────┘
                                                            │
-                                              git push (image tag)
+                                              git push (prod-<sha> tag)
                                                            │
                                                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      GitOps Repo (CD)                               │
 │                                                                     │
-│  base/           overlays/dev/        overlays/prod/    chart/      │
-│  ├── deployment  └── kustomization    └── kustomization ├── Chart   │
-│  ├── service                                            ├── values  │
-│  └── httproute                                          └── tpl/    │
+│  base/           overlays/prod/         chart/                      │
+│  ├── deployment  └── kustomization      ├── Chart.yaml              │
+│  ├── service                            ├── values.yaml           │
+│  └── httproute                          └── templates/              │
 └──────────────────────────────────────────────────────────┬──────────┘
                                                            │
                                                     ArgoCD auto-sync
                                                            │
                                                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      Kubernetes Cluster                              │
+│                   Kubernetes Cluster (Production)                    │
 │                                                                     │
 │  ┌─ Gateway (Envoy) ─ TLS (cert-manager/Let's Encrypt) ┐           │
 │  │                                                      │           │
-│  │  HTTPRoute: todo.jaali.dev                           │           │
+│  │  HTTPRoute: assessment.jaali.dev                     │           │
 │  │       │                                              │           │
 │  │       ▼                                              │           │
 │  │  Service (ClusterIP:80)                              │           │
 │  │       │                                              │           │
 │  │       ├── Pod (nginx:8080) ── replica 1              │           │
-│  │       └── Pod (nginx:8080) ── replica 2              │           │
+│  │       ├── Pod (nginx:8080) ── replica 2              │           │
+│  │       └── Pod (nginx:8080) ── replica 3              │           │
 │  └──────────────────────────────────────────────────────┘           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -73,12 +74,12 @@ This is more secure than a monolithic pipeline where Jenkins runs `kubectl apply
 | SonarQube | Static analysis + quality gate | No (informational) |
 | Docker Build | Multi-stage build | Yes |
 | Trivy Scan | Container vulnerability scan | No (report archived) |
-| Push to Harbor | Push image tagged with commit SHA | Yes |
-| Update GitOps | Update image tag in GitOps repo | Yes |
+| Push to Harbor | Push image tagged `prod-<commit-sha>` | Yes |
+| Update GitOps | Update prod image tag in GitOps repo | Yes |
 
 **Non-blocking scans rationale**: During initial integration, blocking on SonarQube quality gates or Trivy findings would stall delivery. Scans run and report results; the team reviews and progressively hardens thresholds. In a mature pipeline, both would become blocking (`abortPipeline: true`, `--exit-code 1`).
 
-**Image tagging**: Images are tagged with the first 8 characters of the git commit SHA — never `latest`. This ensures traceability, reproducibility, and safe rollbacks.
+**Image tagging**: Images are tagged `prod-<8-char-commit-sha>` — never `latest` or `stable`. This ensures traceability, reproducibility, and safe rollbacks.
 
 ### 4. Kubernetes Deployment
 
@@ -99,18 +100,16 @@ This is more secure than a monolithic pipeline where Jenkins runs `kubectl apply
 
 ### 5. Helm Chart
 
-The Helm chart in `chart/` parameterizes all environment-specific values:
+The Helm chart in the GitOps repo (`chart/`) parameterizes deployment values:
 
 | Parameter | Purpose |
 |-----------|---------|
-| `image.repository` / `image.tag` | Registry and version |
-| `replicaCount` | Scale per environment |
+| `image.repository` / `image.tag` | Registry and version (`prod-<sha>`) |
+| `replicaCount` | Scale (3 in production) |
 | `resources.requests/limits` | Right-sizing |
-| `gateway.hostname` | DNS per environment |
-| `gateway.tlsSecretName` | TLS certificate |
+| `gateway.hostname` | DNS (`assessment.jaali.dev`) |
 
 **Why Helm is useful here**:
-- **Environment templating**: one chart, different `values-dev.yaml` / `values-prod.yaml`
 - **Release management**: `helm history`, `helm rollback` for auditable deployments
 - **Packaging**: chart can be pushed to Harbor as an OCI artifact for versioned distribution
 - **Ecosystem**: well-understood by teams, integrates natively with ArgoCD
@@ -118,8 +117,8 @@ The Helm chart in `chart/` parameterizes all environment-specific values:
 ### 6. Trade-offs and Assumptions
 
 - **Angular 7.2 is EOL**: in production, the first priority would be upgrading the framework. Node 10 is also EOL. The Dockerfile pins these versions to make the existing code work.
-- **Single cluster**: dev and prod share the same cluster, isolated by namespaces. In production, separate clusters would be preferred.
-- **Jenkins not deployed in-scope**: the Jenkinsfile is ready to execute on any Jenkins instance with Docker Pipeline, SonarQube Scanner, and SSH Agent plugins.
+- **Single production cluster**: no separate dev environment — Jenkins deploys directly to prod via GitOps after each successful build on `main`.
+- **Jenkins not deployed in-scope**: the Jenkinsfile is ready to execute on any Jenkins instance with Kubernetes agent, SonarQube Scanner, and Harbor credentials.
 - **Tests may not run in CI**: Angular 7 tests require Chrome/Chromium. The test stage is best-effort (`|| true`) to avoid blocking on environment issues.
 
 ### 7. Production Improvements
@@ -142,8 +141,8 @@ If this were a real production deployment, I would add:
 ### Build locally
 
 ```bash
-docker build -t todo-app:local .
-docker run -p 8080:8080 todo-app:local
+docker build -t assessment-app:local .
+docker run -p 8080:8080 assessment-app:local
 # Open http://localhost:8080
 ```
 
@@ -151,7 +150,7 @@ docker run -p 8080:8080 todo-app:local
 
 ```bash
 # Prerequisites: ArgoCD deployed, cert-manager configured
-kubectl apply -f ../todo-app-gitops/argocd/application-dev.yaml
+kubectl apply -f ../devops-assessment-gitops/argocd/application-prod.yaml
 # ArgoCD syncs automatically from the GitOps repo
 ```
 
@@ -164,7 +163,7 @@ Push to `main` branch — Jenkins picks up the Jenkinsfile and runs the pipeline
 ## Repository Structure
 
 ```
-todo-app/                    ← this repo (fork of akieni-tech/devops-assessment)
+devops-assessment/           ← this repo (fork of akieni-tech/devops-assessment)
 ├── src/                     ← Angular 7 source (unchanged)
 ├── Dockerfile               ← Multi-stage build (Node 10 → Nginx)
 ├── Jenkinsfile              ← CI pipeline (8 stages)
@@ -173,10 +172,9 @@ todo-app/                    ← this repo (fork of akieni-tech/devops-assessmen
 ├── .dockerignore            ← Excludes from Docker context
 └── README.md                ← This file
 
-todo-app-gitops/             ← separate repo
+devops-assessment-gitops/    ← separate repo
 ├── base/                    ← Base K8s manifests (Kustomize)
-├── overlays/dev/            ← Dev overrides (1 replica, dev DNS)
-├── overlays/prod/           ← Prod overrides (3 replicas, TLS)
-├── argocd/                  ← ArgoCD Application CRs
+├── overlays/prod/           ← Prod overrides (3 replicas, prod-<sha> tag)
+├── argocd/                  ← ArgoCD Application CR
 └── chart/                   ← Helm chart
 ```
