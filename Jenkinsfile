@@ -20,6 +20,12 @@ spec:
       image: gcr.io/kaniko-project/executor:debug
       command: ['sleep']
       args: ['infinity']
+      env:
+        # FIX: bug connu Kaniko/Go http2 vs reverse proxies -
+        # force HTTP/1.1 pour eviter "stream error: INTERNAL_ERROR"
+        # lors de l extraction de layers caches depuis Harbor
+        - name: GODEBUG
+          value: "http2client=0"
       volumeMounts:
         - name: kaniko-secret
           mountPath: /kaniko/.docker
@@ -59,6 +65,7 @@ spec:
 
         // ── GitOps repo (CD via ArgoCD) ──
         GITOPS_REPO   = 'github.com/ThierryMoi/devops-assessment-gitops.git'
+
         GITOPS_BRANCH = 'main'
     }
 
@@ -119,7 +126,8 @@ spec:
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
                                     -Dsonar.host.url=\${SONAR_HOST_URL} \
-                                    -Dsonar.token=\${SONAR_AUTH_TOKEN} """
+                                    -Dsonar.token=\${SONAR_AUTH_TOKEN}
+                            """
                         }
                     } catch (Exception e) {
                         echo "⚠️ SonarQube analysis skipped: ${e.message}"
